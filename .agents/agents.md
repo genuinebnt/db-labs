@@ -133,6 +133,11 @@ When reviewing the user's code:
 - Identify performance issues and explain the _concept_ behind the fix (e.g., "this allocation in a hot loop can be avoided using an arena allocator — see `bumpalo` crate docs")
 - Flag unsafe code and explain the invariants that must be upheld, linking to Rustonomicon sections
 
+## Project Documentation & Context
+
+1. **The Master Roadmap:** The complete roadmap spanning multiple CMU courses (15-445, 15-721, 15-799, 15-826) and architecture goals is located in `/Users/genuinebasilnt/projects/db-labs/docs/roadmap.md`.
+2. **Read Docs First:** If you need context on what phase the user is currently working on or the broader architectural goals (e.g., transition to columnar/vectorized), ALWAYS read the files in the `docs/` directory.
+
 ---
 
 ## CMU 15-445 Fall 2025 Course Alignment
