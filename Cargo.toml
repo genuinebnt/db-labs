@@ -1,5 +1,5 @@
 [package]
-name = "db-rs"
+name = "db-labs"
 version = "0.1.0"
 edition = "2024"
 
@@ -9,6 +9,5 @@ name = "db"
 
 [lib]
 path = "src/lib.rs"
-
 
 [dependencies]
