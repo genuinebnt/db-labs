@@ -1,21 +1,25 @@
 use std::{
     cmp::min,
-    collections::{BinaryHeap, HashMap},
+    collections::BinaryHeap,
     fmt::Debug,
     hash::{DefaultHasher, Hash, Hasher},
     iter::zip,
     marker::PhantomData,
+    sync::{
+        Mutex,
+        atomic::{AtomicU32, Ordering},
+    },
 };
 
 use crate::common::util::hash_util;
 
 const SEED_BASE: u64 = 15445;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct CountMinSketch<K> {
     width: u32,
     depth: u32,
-    matrix: Vec<Vec<u32>>,
+    matrix: Vec<Vec<AtomicU32>>,
     _marker: PhantomData<K>,
 }
 
@@ -27,20 +31,22 @@ impl<K: Hash> CountMinSketch<K> {
         Self {
             width,
             depth,
-            matrix: vec![vec![0; width as usize]; depth as usize],
+            matrix: (0..depth)
+                .map(|_| (0..width).map(|_| AtomicU32::new(0)).collect::<Vec<_>>())
+                .collect(),
             _marker: PhantomData,
         }
     }
 
-    pub fn insert(&mut self, item: &K) {
+    pub fn insert(&self, item: &K) {
         let mut hasher = DefaultHasher::new();
         item.hash(&mut hasher);
         let h1 = hasher.finish();
 
-        for (idx, row) in self.matrix.iter_mut().enumerate() {
+        for (idx, row) in self.matrix.iter().enumerate() {
             let h2 = hash_util::combine_hashes(idx as u64, SEED_BASE);
             let h3 = hash_util::combine_hashes(h1, h2) % self.width as u64;
-            row[h3 as usize] += 1;
+            row[h3 as usize].fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -53,31 +59,39 @@ impl<K: Hash> CountMinSketch<K> {
         for (idx, row) in self.matrix.iter().enumerate() {
             let h2 = hash_util::combine_hashes(idx as u64, SEED_BASE);
             let h3 = hash_util::combine_hashes(h1, h2) % self.width as u64;
-            min_count = min(min_count, row[h3 as usize]);
+            min_count = min(min_count, row[h3 as usize].load(Ordering::Relaxed));
         }
 
         min_count
     }
 
-    pub fn clear(&mut self) {
-        self.matrix.iter_mut().for_each(|row| row.fill(0));
+    pub fn clear(&self) {
+        for row in &self.matrix {
+            for cell in row {
+                cell.store(0, Ordering::Relaxed);
+            }
+        }
     }
 
-    pub fn merge(&mut self, other: &CountMinSketch<K>) {
+    pub fn merge(&self, other: &CountMinSketch<K>) {
         // we want to merge self and other
         // they should have same width and depth to be compactible
         // merge should sum the values in the same place
         assert_eq!(self.width, other.width);
         assert_eq!(self.depth, other.depth);
 
-        for (self_row, other_row) in zip(&mut self.matrix, &other.matrix) {
+        let self_matrix = &self.matrix;
+        let other_matrix = &other.matrix;
+
+        for (self_row, other_row) in zip(self_matrix.iter(), other_matrix.iter()) {
             for (self_col, other_col) in zip(self_row, other_row) {
-                *self_col += other_col
+                let other_val = other_col.load(Ordering::Relaxed);
+                self_col.fetch_add(other_val, Ordering::Relaxed);
             }
         }
     }
 
-    pub fn top_k(&self, mut k: usize, candidates: &[K]) -> Vec<(K, u32)>
+    pub fn top_k(&self, k: usize, candidates: &[K]) -> Vec<(K, u32)>
     where
         K: Clone,
     {
@@ -128,6 +142,8 @@ impl<K> ItemWithCount<K> {
 
 #[cfg(test)]
 mod tests {
+    use std::{sync::Arc, thread::spawn};
+
     use super::*;
 
     // Port of BusTub CountMinSketchTest.BasicTest1
@@ -447,5 +463,366 @@ mod tests {
                 assert_eq!(top[rank].0, expected[rank], "case {case:?}, rank {rank}");
             }
         }
+    }
+
+    #[test]
+    fn parallel_test() {
+        for iter in (500..1000).step_by(100) {
+            for num_threads in (8..16).step_by(2) {
+                let cms: Arc<CountMinSketch<String>> = Arc::new(CountMinSketch::new(500, 15));
+                let mut threads = Vec::new();
+                threads.reserve(num_threads);
+
+                for _ in 0..num_threads {
+                    let cms = Arc::clone(&cms);
+                    let handle = std::thread::spawn(move || {
+                        for j in 0..iter {
+                            cms.insert(&"frequent".to_string());
+                            if j % 3 == 0 {
+                                cms.insert(&"less_frequent".to_string());
+                            }
+                        }
+                    });
+
+                    threads.push(handle);
+                }
+
+                for thread in threads {
+                    thread.join().unwrap();
+                }
+
+                let top = cms.top_k(2, &["frequent".to_owned(), "less_frequent".to_owned()]);
+                assert_eq!(2, top.len());
+
+                assert_eq!(top[0].0, "frequent".to_string());
+                assert_eq!(top[0].1, (num_threads * iter) as u32);
+
+                assert_eq!(top[1].0, "less_frequent".to_string());
+                let expected_less_count_iter = (iter as f64 / 3.0).ceil() as u32;
+                let expected_less_freq_count_iter = num_threads as u32 * expected_less_count_iter;
+                assert_eq!(top[1].1, expected_less_freq_count_iter);
+            }
+        }
+    }
+
+    // Port of BusTub CountMinSketchTest.ComplexParallelTest
+    // Two shared sketches filled concurrently, then clear + merge.
+    // Requires clear()/merge() to take &self so they're callable through Arc.
+    #[test]
+    fn complex_parallel_test() {
+        for iterations in (200..=500usize).step_by(100) {
+            let num_threads = 8usize;
+            let cms1: Arc<CountMinSketch<i32>> = Arc::new(CountMinSketch::new(1000, 10));
+            let cms2: Arc<CountMinSketch<i32>> = Arc::new(CountMinSketch::new(1000, 10));
+
+            // Group 1: threads inserting into cms1.
+            let mut handles = Vec::new();
+            for i in 0..num_threads as i32 {
+                let cms1 = Arc::clone(&cms1);
+                handles.push(spawn(move || {
+                    for j in 0..iterations {
+                        cms1.insert(&i);
+                        cms1.insert(&42);
+                        if j % 2 == 0 {
+                            cms1.insert(&100);
+                        }
+                    }
+                }));
+            }
+            // Group 2: half as many threads inserting into cms2.
+            for i in 0..(num_threads / 2) as i32 {
+                let cms2 = Arc::clone(&cms2);
+                handles.push(spawn(move || {
+                    for j in 0..iterations / 2 {
+                        cms2.insert(&(i + 100));
+                        cms2.insert(&42);
+                        if j % 3 == 0 {
+                            cms2.insert(&200);
+                        }
+                    }
+                }));
+            }
+            for h in handles {
+                h.join().unwrap();
+            }
+
+            // cms1 counts.
+            for i in 0..num_threads as i32 {
+                if i != 42 && i != 100 {
+                    assert_eq!(cms1.count(&i), iterations as u32);
+                }
+            }
+            assert_eq!(cms1.count(&42), (num_threads * iterations) as u32);
+            assert_eq!(cms1.count(&100), (num_threads * (iterations / 2)) as u32);
+
+            // clear() through the Arc, then everything reads 0.
+            cms1.clear();
+            for i in 0..iterations as i32 {
+                assert_eq!(cms1.count(&i), 0);
+            }
+            assert_eq!(cms1.count(&42), 0);
+            assert_eq!(cms1.count(&100), 0);
+
+            // cms2 counts.
+            for i in 0..(num_threads / 2) as i32 {
+                assert_eq!(cms2.count(&(i + 100)), (iterations / 2) as u32);
+            }
+            assert_eq!(
+                cms2.count(&42),
+                ((num_threads / 2) * (iterations / 2)) as u32
+            );
+            let expected_200_iter = (iterations / 2).div_ceil(3);
+            assert_eq!(
+                cms2.count(&200),
+                ((num_threads / 2) * expected_200_iter) as u32
+            );
+
+            // Insert a unique item then merge cms2 in.
+            cms1.insert(&100);
+            cms1.merge(&cms2);
+            assert!(cms1.count(&42) > 0);
+            assert_eq!(cms1.count(&100), (iterations / 2 + 1) as u32);
+            assert!(cms2.count(&42) > 0);
+        }
+    }
+
+    // Port of BusTub CountMinSketchTest.TopKComprehensiveTest
+    // Four sketches filled by two thread groups, merged in stages, with TopK
+    // checked at each stage.
+    // Deviation from C++: dimensions are FIXED (C++ randomizes them). Fixed dims
+    // make this reproducible; width 500 x depth 12 is large enough that counts
+    // stay exact (the closest ranks differ by only 4: 2004 vs 2000).
+    #[test]
+    fn topk_comprehensive_test() {
+        let (width, depth, k) = (500u32, 12u32, 5usize);
+        let iterations = 1000usize;
+        let nt1 = 12usize;
+        let nt2 = 8usize;
+
+        let cms1: Arc<CountMinSketch<String>> = Arc::new(CountMinSketch::new(width, depth));
+        let cms2: Arc<CountMinSketch<String>> = Arc::new(CountMinSketch::new(width, depth));
+        let cms3: Arc<CountMinSketch<String>> = Arc::new(CountMinSketch::new(width, depth));
+        let cms4: Arc<CountMinSketch<String>> = Arc::new(CountMinSketch::new(width, depth));
+
+        let songs1 = [
+            "C.R.E.A.M.",
+            "Protect Ya Neck",
+            "Method Man",
+            "Bring da Ruckus",
+            "Da Mystery of Chessboxin'",
+            "Can It Be All So Simple",
+            "Wu-Tang Clan Ain't Nuthing ta F' Wit",
+        ]
+        .map(String::from);
+        let songs2 = [
+            "Triumph",
+            "Gravel Pit",
+            "Tearz",
+            "C.R.E.A.M.",
+            "Ice Cream",
+            "Protect Ya Neck",
+            "Method Man",
+        ]
+        .map(String::from);
+        let all_songs = [
+            "C.R.E.A.M.",
+            "Protect Ya Neck",
+            "Method Man",
+            "Bring da Ruckus",
+            "Da Mystery of Chessboxin'",
+            "Can It Be All So Simple",
+            "Wu-Tang Clan Ain't Nuthing ta F' Wit",
+            "Triumph",
+            "Gravel Pit",
+            "Ice Cream",
+            "Tearz",
+        ]
+        .map(String::from);
+
+        let mut handles = Vec::new();
+        for _ in 0..nt1 {
+            let (c1, c2, c3, c4) = (
+                Arc::clone(&cms1),
+                Arc::clone(&cms2),
+                Arc::clone(&cms3),
+                Arc::clone(&cms4),
+            );
+            let (s1, s2) = (songs1.clone(), songs2.clone());
+            handles.push(spawn(move || {
+                for j in 0..iterations {
+                    c1.insert(&s1[0]); // C.R.E.A.M.
+                    if j % 2 == 0 {
+                        c1.insert(&s1[1]); // Protect Ya Neck
+                    }
+                    if j % 3 == 0 {
+                        c3.insert(&s1[2]); // Method Man
+                    }
+                    if j % 4 == 0 {
+                        c3.insert(&s1[3]); // Bring da Ruckus
+                    }
+                    if j % 6 == 0 {
+                        c2.insert(&s2[4]); // Ice Cream
+                    }
+                    if j % 12 == 0 {
+                        c2.insert(&s2[5]); // Protect Ya Neck (songs2)
+                    }
+                    if j % 15 == 0 {
+                        c4.insert(&s2[6]); // Method Man (songs2)
+                    }
+                }
+            }));
+        }
+        for _ in 0..nt2 {
+            let (c1, c2) = (Arc::clone(&cms1), Arc::clone(&cms2));
+            let (s1, s2) = (songs1.clone(), songs2.clone());
+            handles.push(spawn(move || {
+                for j in 0..iterations {
+                    c2.insert(&s2[0]); // Triumph
+                    if j % 2 == 0 {
+                        c2.insert(&s2[1]); // Gravel Pit
+                    }
+                    if j % 4 == 0 {
+                        c2.insert(&s2[2]); // Tearz
+                    }
+                    if j % 5 == 0 {
+                        c2.insert(&s2[3]); // C.R.E.A.M. (songs2)
+                    }
+                    if j % 5 == 0 {
+                        c1.insert(&s1[4]); // Da Mystery of Chessboxin'
+                    }
+                    if j % 10 == 0 {
+                        c1.insert(&s1[5]); // Can It Be All So Simple
+                    }
+                    if j % 20 == 0 {
+                        c1.insert(&s1[6]); // Wu-Tang ...
+                    }
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        cms1.merge(&cms3);
+        cms2.merge(&cms4);
+
+        let top1 = cms1.top_k(k, &songs1);
+        assert_eq!(top1.len(), k);
+        assert_eq!(top1[0].0, songs1[0]);
+        assert_eq!(top1[1].0, songs1[1]);
+        assert_eq!(top1[2].0, songs1[2]);
+        assert_eq!(top1[3].0, songs1[3]);
+        assert_eq!(top1[4].0, songs1[4]);
+        assert_eq!(top1[0].1, (nt1 * iterations) as u32);
+        assert_eq!(top1[1].1, (nt1 * (iterations / 2)) as u32);
+        assert_eq!(top1[2].1, (nt1 * (iterations / 3 + 1)) as u32);
+        assert_eq!(top1[3].1, (nt1 * (iterations / 4)) as u32);
+        assert_eq!(top1[4].1, (nt2 * (iterations / 5)) as u32);
+
+        let top2 = cms2.top_k(k, &songs2);
+        assert_eq!(top2.len(), k);
+        assert_eq!(top2[0].0, songs2[0]);
+        assert_eq!(top2[1].0, songs2[1]);
+        assert_eq!(top2[2].0, songs2[4]);
+        assert_eq!(top2[3].0, songs2[2]);
+        assert_eq!(top2[4].0, songs2[3]);
+        assert_eq!(top2[0].1, (nt2 * iterations) as u32);
+        assert_eq!(top2[1].1, (nt2 * (iterations / 2)) as u32);
+        assert_eq!(top2[2].1, (nt1 * (iterations / 6 + 1)) as u32);
+        assert_eq!(top2[3].1, (nt2 * (iterations / 4)) as u32);
+        assert_eq!(top2[4].1, (nt2 * (iterations / 5)) as u32);
+
+        cms1.merge(&cms2);
+        let top_merged = cms1.top_k(k, &all_songs);
+        assert_eq!(top_merged.len(), k);
+        assert_eq!(top_merged[0].0, "C.R.E.A.M.");
+        assert_eq!(top_merged[1].0, "Triumph");
+        assert_eq!(top_merged[2].0, "Protect Ya Neck");
+        assert_eq!(top_merged[3].0, "Method Man");
+        assert_eq!(top_merged[4].0, "Gravel Pit");
+        assert_eq!(
+            top_merged[0].1,
+            (nt1 * iterations + nt2 * (iterations / 5)) as u32
+        );
+        assert_eq!(top_merged[1].1, (nt2 * iterations) as u32);
+        assert_eq!(
+            top_merged[2].1,
+            (nt1 * (iterations / 2) + nt1 * (iterations / 12 + 1)) as u32
+        );
+        assert_eq!(
+            top_merged[3].1,
+            (nt1 * (iterations / 3 + 1) + nt1 * (iterations / 15 + 1)) as u32
+        );
+        assert_eq!(top_merged[4].1, (nt2 * (iterations / 2)) as u32);
+    }
+
+    // Port of BusTub CountMinSketchTest.ContentionRatioTest
+    // Compares concurrent (lock-free) insert against an externally-serialized
+    // insert and asserts a speedup. Passes thanks to the per-cell
+    // `AtomicU32::fetch_add` insert — a global-`Mutex` insert would serialize
+    // internally and score ~1.0.
+    //
+    // The >1.2x bound is timing-based and machine-dependent; if it flakes under
+    // load (CI, single core), loosen the threshold or `#[ignore]` it there.
+    #[test]
+    fn contention_ratio_test() {
+        use std::time::Instant;
+
+        let insert_iters: i64 = 10_000;
+        let num_threads = 2;
+        let cms: Arc<CountMinSketch<i64>> = Arc::new(CountMinSketch::new(500, 15));
+
+        let mut time_with_mutex: Vec<u128> = Vec::new();
+        let mut time_wo_mutex: Vec<u128> = Vec::new();
+
+        for iter in 0..10 {
+            let enable_mutex = iter % 2 == 0;
+            let gmtx = Arc::new(Mutex::new(())); // external serialization lock
+
+            let start = Instant::now();
+            let mut handles = Vec::new();
+            for _ in 0..num_threads {
+                let cms = Arc::clone(&cms);
+                let gmtx = Arc::clone(&gmtx);
+                handles.push(spawn(move || {
+                    for j in 0..insert_iters {
+                        if enable_mutex {
+                            let _guard = gmtx.lock().unwrap();
+                            cms.insert(&(j % 10));
+                        } else {
+                            cms.insert(&(j % 10));
+                        }
+                    }
+                }));
+            }
+            for h in handles {
+                h.join().unwrap();
+            }
+
+            let elapsed = start.elapsed().as_micros();
+            if enable_mutex {
+                time_with_mutex.push(elapsed);
+            } else {
+                time_wo_mutex.push(elapsed);
+            }
+        }
+
+        // Correctness: every value inserted 10 iters * 2 threads * 1000 = 20000.
+        // (j % 10 over 0..10_000 hits each of 0..9 exactly 1000 times per run.)
+        for i in 0..10i64 {
+            assert_eq!(cms.count(&i), 20000);
+        }
+
+        let sum_wo: u128 = time_wo_mutex.iter().sum();
+        let sum_with: u128 = time_with_mutex.iter().sum();
+        let speedup = sum_with as f64 / sum_wo as f64;
+        println!("lock-free (us):  {time_wo_mutex:?}");
+        println!("serialized (us): {time_with_mutex:?}");
+        println!("speedup: {speedup}");
+
+        assert!(
+            speedup > 1.2,
+            "speedup {speedup} not > 1.2 — insert is not lock-free yet"
+        );
     }
 }
