@@ -150,7 +150,7 @@ mod tests {
     // Strings, exact counts at large width (200x12) so collisions don't inflate.
     #[test]
     fn basic_test_1() {
-        let mut cms = CountMinSketch::<String>::new(200, 12);
+        let cms = CountMinSketch::<String>::new(200, 12);
 
         assert_eq!(cms.count(&"test".to_string()), 0);
 

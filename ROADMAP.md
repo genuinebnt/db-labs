@@ -6,6 +6,34 @@ This roadmap follows the CMU database curriculum lecture-by-lecture, from a sing
 
 ---
 
+## ⏱️ Self-Paced Timeline — Phase 1 (anchored to 2026-06-16)
+
+> CMU 15-445 Spring 2026 already ended (last lecture Apr 22), so these are **self-paced targets**, not live Gradescope deadlines. **P0 (primer / Count-Min Sketch) is ✅ complete** — remaining work is Projects 1–4. Targets below are calibrated for a **Rust port** (no C++ scaffolding, port the tests yourself, borrow-checker tax) — not CMU's full-time C++ cadence.
+
+**Primary target — Rust-port pace** (~1.5× CMU per project, extra slack on B+Tree, ~10–15 hrs/wk):
+
+| Project | Window | Length | Notes |
+|---|---|---|---|
+| ✅ **P0** Primer (Count-Min Sketch) | done | — | |
+| **P1** Buffer Pool (ARC · Disk Scheduler · BPM · Page Guards) | Jun 16 → **Jul 11** | ~3.5 wk | running start — concurrency stack already learned |
+| **P2** Database Index (B+Tree) — *the beast* | Jul 13 → **Aug 28** | ~6.5 wk | most slack; tree + latch-crabbing fights the borrow checker |
+| **P3** Query Execution | Aug 31 → **Sep 25** | ~3.5 wk | traits map cleanly to operators |
+| **P4** Concurrency Control | Sep 28 → **Oct 30** | ~4.5 wk | lock manager / MVCC |
+| **Buffer / slack** | Nov | ~2 wk | absorb slippage + lectures/HWs |
+
+➡️ **Target finish end-Oct, realistic mid-Nov 2026** (~5 months, sustainable).
+
+**Stretch goal — CMU full-time cadence** (~3 wk/project, back-to-back): P1 Jul 6 · P2 Jul 31 · P3 Aug 21 · P4 Sep 12 → finish ~Sep 12. Only realistic at full-time hours with no port friction.
+
+**Pacing rules (matter more than the dates):**
+1. **Re-anchor after each project** — reset remaining rows from your real finish date; don't chase stale absolute dates.
+2. **Track by milestone, not calendar** — "P1 all tests green" is the signal, not "it's Jul 11."
+3. **Protect P2's slack** — it's the one project likely to overrun; the Nov buffer exists mostly for it.
+4. **Weave lectures/homeworks into the gaps** — watch each lecture before its project; do SQL/written HWs in the seams.
+5. **Don't pack to 100%** — the 2-week buffer is the difference between "finished" and "abandoned."
+
+---
+
 ## Five Phases
 
 | Phase | Focus |
@@ -20,9 +48,66 @@ This roadmap follows the CMU database curriculum lecture-by-lecture, from a sing
 
 # Phase 1 — CMU 15-445: Intro to Database Systems
 
-**Single-node relational DBMS internals · ~25 lectures · Implement BusTub in Rust**
+**Single-node relational DBMS internals · 26 lectures · 5 projects · Implement BusTub in Rust**
 
-**Goal:** Build every major component of a disk-oriented relational DBMS: storage manager, buffer pool, B+ tree index, query executors, lock manager, and ARIES recovery. BusTub is the course's reference DBMS — implement all four projects in Rust.
+**Goal:** Build every major component of a disk-oriented relational DBMS: storage manager, buffer pool, B+ tree index, query executors, and concurrency control. BusTub is the course's reference DBMS — implement all five projects in Rust.
+
+---
+
+## 📅 Synced to Spring 2026 (authoritative)
+
+> Source: <https://15445.courses.cs.cmu.edu/spring2026> (schedule + assignments, fetched 2026-06-16). The detailed per-lecture sections further down are study material; **this table is the source of truth for ordering, projects, and dates.** The detailed sections use older numbering — map them via the module names.
+
+### Lecture schedule (26 lectures)
+
+| # | Date | Lecture | Module |
+|---|------|---------|--------|
+| 01 | Jan 12 | Relational Model & Algebra | A · Relational Model & SQL |
+| 02 | Jan 14 | Modern SQL | A |
+| 03 | Jan 21 | Database Storage I | B · Storage |
+| 04 | Jan 26 | Memory Management (Buffer Pool) | B |
+| 05 | Jan 28 | Database Storage II | B |
+| 06 | Feb 02 | Storage Models & Compression | B |
+| 07 | Feb 04 | Hash Tables | C · Indexes & Filters |
+| 08 | Feb 09 | Indexes & Filters I | C |
+| 09 | Feb 11 | Indexes & Filters II | C |
+| 10 | Feb 16 | Index Concurrency Control | C |
+| 11 | Feb 18 | Sorting & Aggregations Algorithms | D · Query Execution |
+| 12 | Feb 23 | Joins Algorithms | D |
+| 13 | Mar 09 | Query Execution I | D |
+| 14 | Mar 11 | Query Execution II | D |
+| 15 | Mar 16 | Query Planning & Optimization I | D |
+| 16 | Mar 18 | Query Planning & Optimization II | D |
+| 17 | Mar 23 | Concurrency Control Theory | E · Transactions |
+| 18 | Mar 25 | Two-Phase Locking | E |
+| 19 | Mar 30 | Timestamp Ordering | E |
+| 20 | Apr 01 | Multi-Version Concurrency Control I | E |
+| 21 | Apr 06 | Multi-Version Concurrency Control II | E |
+| 22 | Apr 08 | Database Logging | F · Recovery |
+| 23 | Apr 13 | Database Recovery | F |
+| 24 | Apr 15 | Distributed Databases I | G · Distributed |
+| 25 | Apr 20 | Distributed Databases II | G |
+| 26 | Apr 22 | Final Review + Systems Potpourri | — |
+
+### Projects (5) — implement in Rust
+
+| Project | Released | Topic | Components to implement |
+|---------|----------|-------|-------------------------|
+| **P0** | Jan 12 | C++ Primer | *(our track: Rust primer — **Count-Min Sketch ✅ done**)* |
+| **P1** | Jan 26 | **Buffer Pool Manager** *(due Feb 15)* | ARC Replacer · Disk Scheduler (bg worker + promise/future) · Buffer Pool Manager · Page Guards (RAII). **Pages are 8 KB.** Must be thread-safe. |
+| **P2** | Feb 16 | Database Index | B+Tree index (structure, ops, latch-crabbing concurrency) |
+| **P3** | Mar 09 | Query Execution | Executor operators (scan/filter/join/aggregate), query plan |
+| **P4** | Mar 30 | Concurrency Control | Transactions, locking / MVCC |
+
+### Homeworks (6, written/SQL)
+
+HW1 SQL (Jan 14) · HW2 Storage (Jan 28) · HW3 Indexes & Filters (Feb 11) · HW4 Execution & Planning (Mar 11) · HW5 Transactions (Mar 25) · HW6 Recovery (Apr 13)
+
+### Key dates
+
+Jan 19 MLK (no class) · **Feb 25 Mid-Term Exam** · Mar 02 & 04 Spring Break
+
+> **Notable changes vs the older roadmap below:** replacement policy is now **ARC** (LRU-K/LRU/Clock are optional stubs); BusTub pages are **8 KB** (not 4 KB); buffer pool is its own lecture (**#04 Memory Management**) split from storage; indexing is reframed as **"Indexes & Filters"** (adds Bloom/cuckoo filters) with a dedicated **Index Concurrency Control** lecture; MVCC and Logging/Recovery each span two lectures; **Distributed Databases** (#24–25) is now in 15-445.
 
 ---
 
@@ -101,11 +186,11 @@ This roadmap follows the CMU database curriculum lecture-by-lecture, from a sing
 
 #### Coding Exercises
 
-1. Implement a `PageManager` in Rust: manages a `Vec<[u8; 4096]>` backing store. Allocate and free pages. Persist to a file with `pread`/`pwrite` (use `std::os::unix::fs::FileExt`).
-2. Implement a `SlottedPage` in Rust: insert variable-length tuples, delete by slot ID (mark free), compact (garbage collect) the page. Write a test with 100 inserts, 50 deletes, verify space accounting.
+1. Implement a `DiskManager` in Rust: read/write fixed **8 KB** pages (BusTub's page size) to one file by `page_id`, using `std::os::unix::fs::FileExt` (`read_exact_at`/`write_all_at`). This is the storage backend the Project 1 buffer pool sits on.
+2. Implement a `SlottedPage` in Rust: insert variable-length tuples, delete by slot ID (mark free), compact (garbage collect) the page. Write a test with 100 inserts, 50 deletes, verify space accounting. *(Used later by the table heap in Project 3, not Project 1.)*
 3. Implement a `HeapFile` in Rust: a sequence of `SlottedPage`s, with a header page maintaining a free-space directory. Support insert (find a page with space), delete by `(page_id, slot_id)`, and full scan.
 
-> **Implementation note:** BusTub Project #1 starts here: implement a disk manager and page layout. This is the foundation all subsequent projects build on.
+> **Implementation note:** The `DiskManager` is the persistent backend for **Project 1** (the buffer pool drives it via the disk scheduler). Slotted-page / tuple layout (exercises 2–3) is foundational but is exercised later by the table heap, not Project 1.
 
 #### Papers & Resources
 
@@ -146,34 +231,39 @@ This roadmap follows the CMU database curriculum lecture-by-lecture, from a sing
 
 ---
 
-### L05 — Buffer Pool Management
+### L05 — Buffer Pool Management *(Spring 2026 Lecture #04 — Memory Management; this is **Project 1**)*
 
-**What you learn:** The buffer pool manager: mapping disk pages into memory frames, replacement policies (LRU, LRU-K, CLOCK), dirty page tracking, and why the OS page cache is insufficient.
+**What you learn:** The buffer pool manager: mapping disk pages into memory frames, replacement policies, dirty-page tracking, thread-safe page access, and why the OS page cache is insufficient. **Spring 2026 Project 1 has three deliverables — ARC Replacer, Disk Scheduler, Buffer Pool Manager (+ Page Guards) — and pages are 8 KB.**
 
 #### Key Concepts
 
-- Buffer pool: a fixed-size array of frames. Each frame holds one page. A page table maps `page_id → frame_id`. A free list tracks available frames.
-- Page pins: a pinned page cannot be evicted. The executor pins a page before accessing it and unpins when done. Pin count is an atomic counter.
-- Replacement policies: LRU (evict least recently accessed), LRU-K (track last K accesses, evict the page whose Kth-most-recent access is oldest), CLOCK (approximate LRU using a reference bit swept by a hand).
-- Dirty pages: modified pages must be written to disk before eviction (write-ahead logging requirement). Background writer threads flush dirty pages proactively.
-- Sequential flooding: a full table scan pollutes the buffer pool with pages never accessed again. Solution: localize eviction per query, or use a separate buffer pool for sequential scans.
-- Multiple buffer pools: partition by table or by access pattern (OLTP vs scan) to reduce contention on the page table latch.
+- Page vs frame: a **page** is 8 KB of logical data (in memory, on disk, or both); a **frame** is a fixed 8 KB block of memory that holds one page. The buffer pool stores pages inside frames.
+- Buffer pool: a fixed-size array of frames. Each frame holds one page. A page table maps `page_id → frame_id`. A free list tracks available frames. Must be **thread-safe** (latched).
+- Page pins: a pinned page cannot be evicted. A reader/writer pins before accessing, unpins when done. `pin_count` is an atomic counter on the `FrameHeader`; keep it in sync with the replacer's evictable state.
+- **ARC (Adaptive Replacement Cache)** — the required Spring 2026 policy. Two cache lists (MRU = seen once, MFU = seen >once) + two **ghost lists** of recently-evicted pages, plus an adaptive `mru_target_size` that self-tunes on ghost-list hits. Generally beats LRU. (LRU, LRU-K, Clock are optional stubs.)
+- **Disk Scheduler**: a background worker thread consumes a thread-safe queue (channel) of read/write `DiskRequest`s and dispatches them to the `DiskManager`; each request carries a promise/future the caller waits on. Decouples I/O from callers and enables batching/prefetch.
+- **Page Guards** (`ReadPageGuard`/`WritePageGuard`): RAII handles giving thread-safe shared/exclusive access; on drop they unpin (and flush if dirty). In Rust this is the `Drop` trait + native move semantics — far less boilerplate than C++'s move ctors.
+- Dirty pages: a modified page must be flushed to disk before its frame is reused (WAL requirement). Track via `is_dirty_` on the `FrameHeader`.
+- Sequential flooding: a full scan pollutes the pool with pages never reused — part of why ARC (frequency-aware) helps over plain LRU.
 
-#### Coding Exercises
+#### Coding Exercises (Project 1, in Rust)
 
-1. Implement `BufferPoolManager` in Rust: fixed array of frames, `HashMap` page table, a free list, and LRU-K replacement. All guarded by a `RwLock`.
-2. Implement the CLOCK replacement algorithm as an alternative to LRU-K. Benchmark both on a Zipfian access pattern (80% of accesses to 20% of pages). Which performs better?
-3. Simulate sequential scan flooding: run a sequential scan over 10,000 pages with a 1,000-frame buffer pool. Measure hit rate with LRU vs LRU-K (K=2). LRU-K should significantly outperform.
+1. **ARC Replacer**: `record_access`, `set_evictable`, `evict`, `remove`, `size`. Implement the four `record_access` cases (MRU/MFU hit, MRU-ghost, MFU-ghost, miss) and the adaptive target. Use `VecDeque` + `HashMap` for O(1) move-to-front + membership. Thread-safe.
+2. *(Optional, for learning)* Also implement **Clock** and **LRU-K** behind the same `Replacer` trait; benchmark all three on a Zipfian access pattern (80% of accesses to 20% of pages).
+3. **Disk Manager**: read/write fixed **8 KB** pages to one file by `page_id` via `std::os::unix::fs::FileExt` (`read_exact_at`/`write_all_at`).
+4. **Disk Scheduler**: `std::sync::mpsc` channel + a background worker thread; complete each request via a oneshot/`mpsc` callback (Rust's promise/future analogue); join the worker on drop.
+5. **Buffer Pool Manager**: frames + `HashMap` page table + free list, `new_page`/`delete_page`/`checked_read_page`/`checked_write_page`/`flush_page`/`get_pin_count`, wired to the ARC replacer and disk scheduler. Return `ReadPageGuard`/`WritePageGuard` (RAII via `Drop`).
 
-> **Implementation note:** BusTub Project #1: implement the buffer pool manager with LRU-K replacement. This is the most foundational component — every subsequent project depends on it.
+> **Implementation note:** This is **BusTub Project #1 (Spring 2026)** — the most foundational component; every later project depends on it. Build bottom-up: ARC replacer → disk manager → disk scheduler → buffer pool + page guards.
 
 #### Papers & Resources
 
 | Type | Resource |
 |------|----------|
-| VIDEO | [CMU 15-445 Lecture 06 — Buffer Pools](https://youtube.com/@CMUDatabaseGroup) |
-| PAPER | *LRU-K Buffer Replacement* — O'Neil et al. 1993. The paper defining LRU-K. SIGMOD. Required reading for BusTub project 1. |
-| BLOG | [Buffer Pool Manager in BusTub](https://github.com/cmu-db/bustub) — cmu-db.github.io. The reference implementation. Read the header files before implementing. |
+| VIDEO | [CMU 15-445 Lecture #04 — Memory Management](https://youtube.com/@CMUDatabaseGroup) |
+| PAPER | *ARC: A Self-Tuning, Low Overhead Replacement Cache* — Megiddo & Modha, USENIX FAST 2003. The ARC paper. Required reading for Project 1. |
+| PAPER | *LRU-K Buffer Replacement* — O'Neil et al., SIGMOD 1993. The classic LRU-K policy (optional alternative). |
+| SPEC | [BusTub Project #1 — Buffer Pool Manager](https://15445.courses.cs.cmu.edu/spring2026) — read the `arc_replacer.h`, `disk_scheduler.h`, `page_guard.h`, and `buffer_pool_manager.h` headers before implementing. |
 
 ---
 
