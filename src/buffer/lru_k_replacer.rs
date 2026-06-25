@@ -1,12 +1,6 @@
-use std::{
-    collections::{HashMap, VecDeque, hash_map::Entry},
-    f32::INFINITY,
-};
+use std::collections::{HashMap, VecDeque, hash_map::Entry};
 
-use crate::{
-    buffer::replacer::Replacer,
-    common::config::{FrameId, PageId},
-};
+use crate::{buffer::replacer::Replacer, common::config::FrameId};
 
 #[derive(Debug)]
 pub struct LRUKReplacer {
@@ -76,15 +70,15 @@ impl Replacer for LRUKReplacer {
 
         self.current_timestamp += 1;
 
-        self.store
+        let entry = self
+            .store
             .entry(frame_id)
-            .and_modify(|node| {
-                node.history.push_back(self.current_timestamp);
-                if node.history.len() > self.k {
-                    node.history.pop_front();
-                }
-            })
             .or_insert_with(|| LRUKNode::new(self.k, frame_id));
+
+        entry.history.push_back(self.current_timestamp);
+        if entry.history.len() > self.k {
+            entry.history.pop_front();
+        }
     }
 
     fn remove(&mut self, frame_id: FrameId) {
@@ -129,5 +123,101 @@ impl LRUKNode {
             frame_id,
             is_evictable: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::buffer::replacer::Replacer;
+
+    // Ported from BusTub test/buffer/lru_k_replacer_test.cpp (DISABLED_SampleTest).
+    #[test]
+    fn sample_test() {
+        let mut lru_replacer = LRUKReplacer::new(7, 2);
+
+        // Add six frames [1..=6]; mark 1-5 evictable, 6 non-evictable.
+        lru_replacer.record_access(1);
+        lru_replacer.record_access(2);
+        lru_replacer.record_access(3);
+        lru_replacer.record_access(4);
+        lru_replacer.record_access(5);
+        lru_replacer.record_access(6);
+        lru_replacer.set_evictable(1, true);
+        lru_replacer.set_evictable(2, true);
+        lru_replacer.set_evictable(3, true);
+        lru_replacer.set_evictable(4, true);
+        lru_replacer.set_evictable(5, true);
+        lru_replacer.set_evictable(6, false);
+
+        // Size = number of evictable frames, not total tracked.
+        assert_eq!(lru_replacer.size(), 5);
+
+        // Second access for frame 1; the rest share max (+inf) backward k-distance,
+        // so they evict in oldest-timestamp order: [2, 3, 4, 5, 1].
+        lru_replacer.record_access(1);
+
+        assert_eq!(lru_replacer.evict(), Some(2));
+        assert_eq!(lru_replacer.evict(), Some(3));
+        assert_eq!(lru_replacer.evict(), Some(4));
+        assert_eq!(lru_replacer.size(), 2);
+        // Remaining: [5, 1].
+
+        // Insert [3, 4], update 5; ordering becomes [3, 1, 5, 4].
+        lru_replacer.record_access(3);
+        lru_replacer.record_access(4);
+        lru_replacer.record_access(5);
+        lru_replacer.record_access(4);
+        lru_replacer.set_evictable(3, true);
+        lru_replacer.set_evictable(4, true);
+        assert_eq!(lru_replacer.size(), 4);
+
+        // 3 has +inf distance (single access) -> evicted next.
+        assert_eq!(lru_replacer.evict(), Some(3));
+        assert_eq!(lru_replacer.size(), 3);
+
+        // 6 becomes evictable; +inf distance, oldest timestamp -> evicted next.
+        lru_replacer.set_evictable(6, true);
+        assert_eq!(lru_replacer.size(), 4);
+        assert_eq!(lru_replacer.evict(), Some(6));
+        assert_eq!(lru_replacer.size(), 3);
+
+        // Mark 1 non-evictable -> [5, 4]; 5 has the larger backward k-distance.
+        lru_replacer.set_evictable(1, false);
+        assert_eq!(lru_replacer.size(), 2);
+        assert_eq!(lru_replacer.evict(), Some(5));
+        assert_eq!(lru_replacer.size(), 1);
+
+        // Refresh 1 and make it evictable -> [4, 1].
+        lru_replacer.record_access(1);
+        lru_replacer.record_access(1);
+        lru_replacer.set_evictable(1, true);
+        assert_eq!(lru_replacer.size(), 2);
+
+        // Evict the last two.
+        assert_eq!(lru_replacer.evict(), Some(4));
+        assert_eq!(lru_replacer.size(), 1);
+        assert_eq!(lru_replacer.evict(), Some(1));
+        assert_eq!(lru_replacer.size(), 0);
+
+        // Re-insert 1, non-evictable. Failed eviction must not change size.
+        lru_replacer.record_access(1);
+        lru_replacer.set_evictable(1, false);
+        assert_eq!(lru_replacer.size(), 0);
+        assert_eq!(lru_replacer.evict(), None);
+
+        // Make 1 evictable again and evict it.
+        lru_replacer.set_evictable(1, true);
+        assert_eq!(lru_replacer.size(), 1);
+        assert_eq!(lru_replacer.evict(), Some(1));
+        assert_eq!(lru_replacer.size(), 0);
+
+        // Empty replacer: evict is a no-op.
+        assert_eq!(lru_replacer.evict(), None);
+        assert_eq!(lru_replacer.size(), 0);
+
+        // Setting evictability on a nonexistent frame must not panic or change state.
+        lru_replacer.set_evictable(6, false);
+        lru_replacer.set_evictable(6, true);
     }
 }
